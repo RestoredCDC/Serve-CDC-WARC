@@ -1,0 +1,16 @@
+# Ignore (Emacs) backup files
+*~
+
+# Ignore everything in public/
+public/*
+venv/*
+.dh-diag
+
+# Un-ignore public/docs/
+!public/docs/build/
+
+# ignore binary files
+**/__pycache__/
+
+# ignore logs
+logs/*
