@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+
+import pytest
+
+from serve import rewrite_html_urls, ServeLevelDB
+
+def test_relative_paths():
+    """
+    Check that we handle relative paths correctly
+    """
+    assert (
+        rewrite_html_urls("https://hivrisk.cdc.gov/", b"<a href='../foo.html'>")
+        == b"<a href='../foo.html'>"
+    )
+    assert (
+        rewrite_html_urls("https://hivrisk.cdc.gov/", b'<a href="../foo.html">')
+        == b'<a href="../foo.html">'
+    )
+
+def test_absolute_paths():
+    """
+    Check that we handle absolute paths correctly
+    """
+    assert (
+        rewrite_html_urls("https://hivrisk.cdc.gov/", b"<a href='/foo.html'>")
+        == b"<a href='/https://hivrisk.cdc.gov/foo.html'>"
+    )
+    assert (
+        rewrite_html_urls("https://hivrisk.cdc.gov/", b'<a href="/foo.html">')
+        == b'<a href="/https://hivrisk.cdc.gov/foo.html">'
+    )
+
+def test_full_urls():
+    """
+    Check that we handle full URLs correctly
+    """
+    assert (
+        rewrite_html_urls(
+            "https://hivrisk.cdc.gov/", b"<a href='https://hivrisk.cdc.gov/foo.html'>"
+        )
+        == b"<a href='/https://hivrisk.cdc.gov/foo.html'>"
+    )
+    assert (
+        rewrite_html_urls(
+            "https://hivrisk.cdc.gov/", b'<a href="https://hivrisk.cdc.gov/foo.html">'
+        )
+        == b'<a href="/https://hivrisk.cdc.gov/foo.html">'
+    )
+
+def test_other_subdomains():
+    """
+    Check that we aren't just redirecting everything to hivrisk
+    """
+    assert (
+        rewrite_html_urls(
+            "https://nccd.cdc.gov/", b"<a href='https://nccd.cdc.gov/foo.html'>"
+        )
+        == b"<a href='/https://nccd.cdc.gov/foo.html'>"
+    )
+    
+def test_src_rewrites():
+    """
+    Check that we rewrite src as well as href
+    """
+    assert (
+        rewrite_html_urls(
+            "https://hivrisk.cdc.gov/", b"<img src='https://hivrisk.cdc.gov/img.jpg'>"
+        )
+        == b"<img src='/https://hivrisk.cdc.gov/img.jpg'>"
+    )
+    assert (
+        rewrite_html_urls(
+            "https://hivrisk.cdc.gov/", b'<img src="https://hivrisk.cdc.gov/img.jpg">'
+        )
+        == b'<img src="/https://hivrisk.cdc.gov/img.jpg">'
+    )
+
+class MyServeLevelDB(ServeLevelDB):
+    """
+    Class for testing, with a hashmap instead of a LevelDB instance
+
+    This works because we can use get() on each.
+    """
+    def __init__(self, dbfolder):
+        self.content_db = {
+            b"https://hivrisk.cdc.gov/": b"<p>Welcome to hivrisk.cdc.gov</p>",
+            b"https://nccd.cdc.gov/": b"<p>Welcome to nccd.cdc.gov</p>",
+            b"https://nccd.cdc.gov/favicon.ico": b"1234"
+        }
+        self.mimetype_db = {
+            b"https://hivrisk.cdc.gov/": b"text/html",
+            b"https://nccd.cdc.gov/": b"text/html",
+            b"https://nccd.cdc.gov/favicon.ico": b"image/x-icon"
+        }
+
+def test_find_content():
+    """
+    Check that we find the content with or without a trailing slash
+    """
+    db = MyServeLevelDB("dummy")
+
+    # Check without a trailing slash
+    assert (
+        db.find_content("https://hivrisk.cdc.gov")
+        == (b"<p>Welcome to hivrisk.cdc.gov</p>", "text/html")
+    )
+
+    # Check with a trailing slash
+    assert (
+        db.find_content("https://hivrisk.cdc.gov/")
+        == (b"<p>Welcome to hivrisk.cdc.gov</p>", "text/html")
+    )
+
+def test_find_content_mimetypes():
+    """
+    Check that we return other mime types
+    """
+    db = MyServeLevelDB("dummy")
+
+    # Check something other than the main page
+    assert (
+        db.find_content("https://nccd.cdc.gov/favicon.ico")
+        == (b"1234", "image/x-icon")
+    )
+
+def test_find_content_not_found():
+    """
+    Check how we respond for a request for something we don't have
+    """
+    db = MyServeLevelDB("dummy")
+
+    # Check something that we don't expect to exist
+    assert (
+        db.find_content("https://nccd.cdc.gov/page-definitely-not-there.html")
+        == (None, None)
+    )

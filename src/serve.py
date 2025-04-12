@@ -12,41 +12,61 @@ from flask import Flask, Response, redirect, render_template, request, url_for, 
 from waitress import serve
 import plyvel
 
-# Logging directory setup
-LOG_DIR = Path("../logs")
-if not LOG_DIR.exists():
-    logging.info(f"Creating log directory: {LOG_DIR}")
-    LOG_DIR.mkdir(mode=0o755, parents=True)
-
-# Configure logging: logs to both console and a file
-logging.basicConfig(
-    level=logging.DEBUG,
-    format="%(asctime)s - %(levelname)s - %(funcName)s - %(message)s",
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler(LOG_DIR / "serve_restoreCDCWarc.log")
-    ]
-)
-
-parser = argparse.ArgumentParser()
-parser.add_argument('--hostname', default="127.0.0.1", type=str)
-parser.add_argument('--port', default=7070, type=int)
-parser.add_argument('--dbfolder', default="../data/dev/db/cdc_database", type=str)
-args = parser.parse_args()
-
-# this is the path of the LevelDB database we converted from .zim using zim_converter.py
-db = plyvel.DB(str(args.dbfolder))
-
-# the LevelDB database has 2 keyspaces, one for the content, and one for its type
-# please check zim_converter.py script comments for more info
-content_db = db.prefixed_db(b"c-")
-mimetype_db = db.prefixed_db(b"m-")
-
 app = Flask(__name__)
 
-# serving to localhost interfaces at port 9090
-hostName = args.hostname
-serverPort = args.port
+class ServeLevelDB:
+
+    def __init__(self, dbfolder):
+        self.dbfolder = dbfolder
+
+        # this is the path of the LevelDB database we converted from
+        # .zim using zim_converter.py
+        self.db = plyvel.DB(str(self.dbfolder))
+
+        # the LevelDB database has 2 keyspaces, one for the content,
+        # and one for its type please check zim_converter.py script
+        # comments for more info
+        self.content_db = self.db.prefixed_db(b"c-")
+        self.mimetype_db = self.db.prefixed_db(b"m-")
+
+
+    def find_content(self, full_path):
+        """
+        Find the relevant content, possibly adding or removing an extra '/'
+
+        :param full_path: The original URL, as bytes
+        :return: Two values, the content (as bytes), ans the mimetype (as str)
+        """
+        raw_key = bytes(full_path, "utf-8")
+
+        logging.debug(f"Looking up key: {full_path}")
+        content = self.content_db.get(raw_key)
+        mimetype_bytes = self.mimetype_db.get(raw_key)
+
+        if content is None or mimetype_bytes is None:
+            # Try with, or without a / at the end
+            key_match = re.match(r"([^?]+)/\?(.*)$", full_path)
+            if key_match:
+                raw_key = bytes(key_match.group(1) + "?" + key_match.group(2), "utf-8")
+            else:
+                key_match = re.match(r"([^?]+)\?(.*)$", full_path)
+                if key_match:
+                    raw_key = bytes(key_match.group(1) + "/?" + key_match.group(2), "utf-8")
+                else:
+                    raw_key = raw_key + b"/"
+            logging.debug(f"Looking up secondary key: {raw_key}")
+            content = self.content_db.get(raw_key)
+            mimetype_bytes = self.mimetype_db.get(raw_key)
+            if content is None or mimetype_bytes is None:
+                logging.warning(f"Missing content or mimetype for path: {full_path}")
+                return None, None
+
+            logging.debug(f"Found {raw_key} after modification")
+
+        mimetype = mimetype_bytes.decode("utf-8")
+
+        return content, mimetype
+
 
 def rewrite_html_urls(full_path, content):
     """
@@ -82,6 +102,7 @@ def rewrite_html_urls(full_path, content):
     content = content.replace(bytes(f" https://{website}/", "utf-8"),
                               bytes(f" /https://{website}/", "utf-8"))
     content = content.replace(b"href=\"/", bytes(f"href=\"/https://{website}/", "utf-8"))
+    content = content.replace(b"href=\'/", bytes(f"href=\'/https://{website}/", "utf-8"))
     content = content.replace(bytes(f"href=\"https://{website}/", "utf-8"),
                               bytes(f"href=\"/https://{website}/", "utf-8"))
     content = content.replace(bytes(f"href=\'https://{website}/", "utf-8"),
@@ -93,42 +114,6 @@ def rewrite_html_urls(full_path, content):
 
     return content
 
-def find_content(full_path):
-    """
-    Find the relevant content, possibly adding or removing an extra '/'
-
-    :param full_path: The original URL, as bytes
-    :return: Two values, the content (as bytes), ans the mimetype (as str)
-    """
-    raw_key = bytes(full_path, "utf-8")
-
-    logging.debug(f"Looking up key: {full_path}")
-    content = content_db.get(raw_key)
-    mimetype_bytes = mimetype_db.get(raw_key)
-
-    if content is None or mimetype_bytes is None:
-        # Try with, or without a / at the end
-        key_match = re.match(r"([^?]+)/\?(.*)$", full_path)
-        if key_match:
-            raw_key = bytes(key_match.group(1) + "?" + key_match.group(2), "utf-8")
-        else:
-            key_match = re.match(r"([^?]+)\?(.*)$", full_path)
-            if key_match:
-                raw_key = bytes(key_match.group(1) + "/?" + key_match.group(2), "utf-8")
-            else:
-                raw_key = raw_key + b"/"
-        logging.debug(f"Looking up secondary key: {raw_key}")
-        content = content_db.get(raw_key)
-        mimetype_bytes = mimetype_db.get(raw_key)
-        if content is None or mimetype_bytes is None:
-            logging.warning(f"Missing content or mimetype for path: {full_path}")
-            return None, None
-
-        logging.debug(f"Found {raw_key} after modification")
-
-    mimetype = mimetype_bytes.decode("utf-8")
-
-    return content, mimetype
 
 @app.route("/")
 def home():
@@ -137,11 +122,14 @@ def home():
     """
     return redirect("/www.cdc.gov/")
 
+
 @app.route("/<path:subpath>")
 def lookup(subpath):
     """
     Catch-all route
     """
+    global serve_db
+
     try:
         if request.query_string:
             full_path = request.full_path[1:]
@@ -153,7 +141,7 @@ def lookup(subpath):
             full_path = full_path.replace("https:/", "https://", 1)
             logging.debug(f"Full path fixed: {full_path}")
 
-        content, mimetype = find_content(full_path)
+        content, mimetype = serve_db.find_content(full_path)
         raw_key = bytes(full_path, "UTF-8")
 
         if content is None or mimetype is None:
@@ -179,6 +167,53 @@ def lookup(subpath):
         return Response("Internal Server Error", status=500)
 
 
+def setup_logging():
+    """
+    Set up our logging, creating the directory first if necessary
+    """
+    LOG_DIR = Path("../logs")
+    if not LOG_DIR.exists():
+        logging.info(f"Creating log directory: {LOG_DIR}")
+        LOG_DIR.mkdir(mode=0o755, parents=True)
+
+    # Configure logging: logs to both console and a file
+    logging.basicConfig(
+        level=logging.DEBUG,
+        format="%(asctime)s - %(levelname)s - %(funcName)s - %(message)s",
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler(LOG_DIR / "serve_restoreCDCWarc.log")
+        ]
+    )
+
+
+def parse_arguments():
+    """
+    Parse command line arguments and return the result
+
+    :return: the parsed arguments
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--hostname', default="127.0.0.1", type=str)
+    parser.add_argument('--port', default=7070, type=int)
+    parser.add_argument('--dbfolder', default="../data/dev/db/cdc_database", type=str)
+    return parser.parse_args()
+
+
+def main():
+    """
+    Main loop
+    """
+    global serve_db
+
+    setup_logging()
+    args = parse_arguments()
+
+    serve_db = ServeLevelDB(args.dbfolder)
+
+    print(f"Starting cdcmirror server process at port {args.port}")
+    serve(app, host=args.hostname, port=args.port)
+
+
 if __name__ == "__main__":
-    print(f"Starting cdcmirror server process at port {serverPort}")
-    serve(app, host=hostName, port=serverPort)
+    main()
