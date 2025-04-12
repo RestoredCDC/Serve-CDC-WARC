@@ -89,7 +89,7 @@ def rewrite_html_urls(full_path, content):
     srcset attributes and such, so there are no doubt other hidden
     treasures.
     """
-    path_match = re.match(r"https://([^/]+)/", full_path)
+    path_match = re.match(r"([^/]+)/", full_path)
     if not path_match:
         # Can't do anything useful here
         return content
@@ -100,19 +100,46 @@ def rewrite_html_urls(full_path, content):
     content = content.replace(b"hivriskstage.cdc.gov", b"hivrisk.cdc.gov")
 
     content = content.replace(bytes(f" https://{website}/", "utf-8"),
-                              bytes(f" /https://{website}/", "utf-8"))
-    content = content.replace(b"href=\"/", bytes(f"href=\"/https://{website}/", "utf-8"))
-    content = content.replace(b"href=\'/", bytes(f"href=\'/https://{website}/", "utf-8"))
+                              bytes(f" /{website}/", "utf-8"))
+    content = content.replace(b"href=\"/", bytes(f"href=\"/{website}/", "utf-8"))
+    content = content.replace(b"href=\'/", bytes(f"href=\'/{website}/", "utf-8"))
     content = content.replace(bytes(f"href=\"https://{website}/", "utf-8"),
-                              bytes(f"href=\"/https://{website}/", "utf-8"))
+                              bytes(f"href=\"/{website}/", "utf-8"))
     content = content.replace(bytes(f"href=\'https://{website}/", "utf-8"),
-                              bytes(f"href=\'/https://{website}/", "utf-8"))
+                              bytes(f"href=\'/{website}/", "utf-8"))
     content = content.replace(bytes(f"src=\"https://{website}/", "utf-8"),
-                              bytes(f"src=\"/https://{website}/", "utf-8"))
+                              bytes(f"src=\"/{website}/", "utf-8"))
     content = content.replace(bytes(f"src=\'https://{website}/", "utf-8"),
-                              bytes(f"src=\'/https://{website}/", "utf-8"))
+                              bytes(f"src=\'/{website}/", "utf-8"))
 
     return content
+
+
+def simplify_path(path):
+    """
+    Remove any http: and https: and slashes so all that's left is
+    subdomain.cdc.gov/...
+
+    :param path: The original full-path
+    """
+    # Fix missing slash if needed
+    if path.startswith("https:/") and not path.startswith("https://"):
+        path = path.replace("https:/", "", 1)
+        return path
+
+    if path.startswith("http:/") and not path.startswith("http://"):
+        path = path.replace("http:/", "", 1)
+        return path
+
+    if path.startswith("https://"):
+        path = path.replace("https://", "", 1)
+        return path
+
+    if path.startswith("http://"):
+        path = path.replace("http://", "", 1)
+        return path
+
+    return path
 
 
 @app.route("/")
@@ -136,12 +163,10 @@ def lookup(subpath):
         else:
             full_path = request.path[1:]
         logging.debug(f"Full path: {full_path}")
-        # Fix missing slash if needed
-        if full_path.startswith("https:/") and not full_path.startswith("https://"):
-            full_path = full_path.replace("https:/", "https://", 1)
-            logging.debug(f"Full path fixed: {full_path}")
 
-        content, mimetype = serve_db.find_content(full_path)
+        full_path = simplify_path(full_path)
+
+        content, mimetype = serve_db.find_content(f"https://{full_path}")
         raw_key = bytes(full_path, "UTF-8")
 
         if content is None or mimetype is None:
