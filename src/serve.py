@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import logging
 import re
 from pathlib import Path
-from urllib import parse
-from urllib.parse import urlparse
 
-from flask import Flask, Response, redirect, render_template, request, url_for, jsonify
+from flask import Flask, Response, redirect, request
 from waitress import serve
 import plyvel
 
 app = Flask(__name__)
 
+
 class ServeLevelDB:
 
     def __init__(self, dbfolder):
+        """
+        Initialize the ServeLevelDB object from a given dbfolder
+
+        :param dbfolder: The relative or absolute path to the LevelDB
+        with restored CDC content
+        """
         self.dbfolder = dbfolder
 
         # this is the path of the LevelDB database we converted from
@@ -28,7 +32,6 @@ class ServeLevelDB:
         # comments for more info
         self.content_db = self.db.prefixed_db(b"c-")
         self.mimetype_db = self.db.prefixed_db(b"m-")
-
 
     def find_content(self, full_path):
         """
@@ -47,18 +50,24 @@ class ServeLevelDB:
             # Try with, or without a / at the end
             key_match = re.match(r"([^?]+)/\?(.*)$", full_path)
             if key_match:
-                raw_key = bytes(key_match.group(1) + "?" + key_match.group(2), "utf-8")
+                raw_key = bytes(
+                    key_match.group(1) + "?" + key_match.group(2), "utf-8"
+                )
             else:
                 key_match = re.match(r"([^?]+)\?(.*)$", full_path)
                 if key_match:
-                    raw_key = bytes(key_match.group(1) + "/?" + key_match.group(2), "utf-8")
+                    raw_key = bytes(
+                        key_match.group(1) + "/?" + key_match.group(2), "utf-8"
+                    )
                 else:
                     raw_key = raw_key + b"/"
             logging.debug(f"Looking up secondary key: {raw_key}")
             content = self.content_db.get(raw_key)
             mimetype_bytes = self.mimetype_db.get(raw_key)
             if content is None or mimetype_bytes is None:
-                logging.warning(f"Missing content or mimetype for path: {full_path}")
+                logging.warning(
+                    f"Missing content or mimetype for path: {full_path}"
+                )
                 return None, None
 
             logging.debug(f"Found {raw_key} after modification")
@@ -95,14 +104,18 @@ def rewrite_html_urls(full_path, content):
         return content
     website = path_match.group(1)
 
-    # Looks like the hivrisk.cdc.gov site had some stray references to their staging site,
-    # not that it makes much of a difference :)
+    # Looks like the hivrisk.cdc.gov site had some stray references to
+    # their staging site, not that it makes much of a difference :)
     content = content.replace(b"hivriskstage.cdc.gov", b"hivrisk.cdc.gov")
 
     content = content.replace(bytes(f" https://{website}/", "utf-8"),
                               bytes(f" /{website}/", "utf-8"))
-    content = content.replace(b"href=\"/", bytes(f"href=\"/{website}/", "utf-8"))
-    content = content.replace(b"href=\'/", bytes(f"href=\'/{website}/", "utf-8"))
+    content = content.replace(
+        b"href=\"/", bytes(f"href=\"/{website}/", "utf-8")
+    )
+    content = content.replace(
+        b"href=\'/", bytes(f"href=\'/{website}/", "utf-8")
+    )
     content = content.replace(bytes(f"href=\"https://{website}/", "utf-8"),
                               bytes(f"href=\"/{website}/", "utf-8"))
     content = content.replace(bytes(f"href=\'https://{website}/", "utf-8"),
@@ -155,7 +168,6 @@ def lookup(subpath):
     """
     Catch-all route
     """
-    global serve_db
 
     try:
         if request.query_string:
@@ -167,7 +179,6 @@ def lookup(subpath):
         full_path = simplify_path(full_path)
 
         content, mimetype = serve_db.find_content(f"https://{full_path}")
-        raw_key = bytes(full_path, "UTF-8")
 
         if content is None or mimetype is None:
             return Response("Not Found", status=404)
@@ -179,7 +190,9 @@ def lookup(subpath):
 
         logging.debug(f"Mime type {mimetype} for {full_path}")
 
-        if full_path.startswith("https://") and mimetype == "text/html" or mimetype.startswith("text/html;"):
+        if full_path.startswith("https://") and (
+                mimetype == "text/html" or mimetype.startswith("text/html;")
+        ):
             content = rewrite_html_urls(full_path, content)
 
         # XXX: We probably also need to rewrite URLs in javascript and
@@ -188,7 +201,7 @@ def lookup(subpath):
         return Response(content, mimetype=mimetype)
 
     except Exception as e:
-        logging.exception(f"Error retrieving {subpath}")
+        logging.exception(f"Error retrieving {subpath}: {e}")
         return Response("Internal Server Error", status=500)
 
 
@@ -221,7 +234,9 @@ def parse_arguments():
     parser = argparse.ArgumentParser()
     parser.add_argument('--hostname', default="127.0.0.1", type=str)
     parser.add_argument('--port', default=7070, type=int)
-    parser.add_argument('--dbfolder', default="../data/dev/db/cdc_database", type=str)
+    parser.add_argument(
+        '--dbfolder', default="../data/dev/db/cdc_database", type=str
+    )
     return parser.parse_args()
 
 
