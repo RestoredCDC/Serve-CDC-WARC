@@ -1,0 +1,29 @@
+name: Run Flake8
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  checkout-and-test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout branch
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        # Match the server version
+        python-version: '3.12.3'
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+        pip install flake8
+    - name: Run Flake8
+      run: |
+        flake8

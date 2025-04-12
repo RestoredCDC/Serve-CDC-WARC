@@ -1,8 +1,5 @@
-#!/usr/bin/env python3
-
-import pytest
-
 from serve import rewrite_html_urls, simplify_path, ServeLevelDB
+
 
 def test_relative_paths():
     """
@@ -17,6 +14,7 @@ def test_relative_paths():
         == b'<a href="../foo.html">'
     )
 
+
 def test_absolute_paths():
     """
     Check that we handle absolute paths correctly
@@ -30,9 +28,13 @@ def test_absolute_paths():
         == b'<a href="/hivrisk.cdc.gov/foo.html">'
     )
     assert (
-        rewrite_html_urls("hivrisk.cdc.gov/", b'<link rel="shortcut icon" href="/TemplatePackage/4.0/assets/imgs/favicon.ico">')
-        == b'<link rel="shortcut icon" href="/hivrisk.cdc.gov/TemplatePackage/4.0/assets/imgs/favicon.ico">'
+        rewrite_html_urls(
+            "hivrisk.cdc.gov/",
+            b'<link rel="shortcut icon" href="/favicon.ico">'
+        )
+        == b'<link rel="shortcut icon" href="/hivrisk.cdc.gov/favicon.ico">'
     )
+
 
 def test_full_urls():
     """
@@ -51,6 +53,7 @@ def test_full_urls():
         == b'<a href="/hivrisk.cdc.gov/foo.html">'
     )
 
+
 def test_other_subdomains():
     """
     Check that we aren't just redirecting everything to hivrisk
@@ -61,7 +64,8 @@ def test_other_subdomains():
         )
         == b"<a href='/nccd.cdc.gov/foo.html'>"
     )
-    
+
+
 def test_src_rewrites():
     """
     Check that we rewrite src as well as href
@@ -78,6 +82,7 @@ def test_src_rewrites():
         )
         == b'<img src="/hivrisk.cdc.gov/img.jpg">'
     )
+
 
 class MyServeLevelDB(ServeLevelDB):
     """
@@ -97,6 +102,7 @@ class MyServeLevelDB(ServeLevelDB):
             b"https://nccd.cdc.gov/favicon.ico": b"image/x-icon"
         }
 
+
 def test_find_content():
     """
     Check that we find the content with or without a trailing slash
@@ -115,6 +121,7 @@ def test_find_content():
         == (b"<p>Welcome to hivrisk.cdc.gov</p>", "text/html")
     )
 
+
 def test_find_content_mimetypes():
     """
     Check that we return other mime types
@@ -127,6 +134,7 @@ def test_find_content_mimetypes():
         == (b"1234", "image/x-icon")
     )
 
+
 def test_find_content_not_found():
     """
     Check how we respond for a request for something we don't have
@@ -138,6 +146,7 @@ def test_find_content_not_found():
         db.find_content("https://nccd.cdc.gov/page-definitely-not-there.html")
         == (None, None)
     )
+
 
 def test_simplify_path():
     """
