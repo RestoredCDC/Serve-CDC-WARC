@@ -2,18 +2,18 @@
 
 import pytest
 
-from serve import rewrite_html_urls, ServeLevelDB
+from serve import rewrite_html_urls, simplify_path, ServeLevelDB
 
 def test_relative_paths():
     """
     Check that we handle relative paths correctly
     """
     assert (
-        rewrite_html_urls("https://hivrisk.cdc.gov/", b"<a href='../foo.html'>")
+        rewrite_html_urls("hivrisk.cdc.gov/", b"<a href='../foo.html'>")
         == b"<a href='../foo.html'>"
     )
     assert (
-        rewrite_html_urls("https://hivrisk.cdc.gov/", b'<a href="../foo.html">')
+        rewrite_html_urls("hivrisk.cdc.gov/", b'<a href="../foo.html">')
         == b'<a href="../foo.html">'
     )
 
@@ -22,12 +22,16 @@ def test_absolute_paths():
     Check that we handle absolute paths correctly
     """
     assert (
-        rewrite_html_urls("https://hivrisk.cdc.gov/", b"<a href='/foo.html'>")
-        == b"<a href='/https://hivrisk.cdc.gov/foo.html'>"
+        rewrite_html_urls("hivrisk.cdc.gov/", b"<a href='/foo.html'>")
+        == b"<a href='/hivrisk.cdc.gov/foo.html'>"
     )
     assert (
-        rewrite_html_urls("https://hivrisk.cdc.gov/", b'<a href="/foo.html">')
-        == b'<a href="/https://hivrisk.cdc.gov/foo.html">'
+        rewrite_html_urls("hivrisk.cdc.gov/", b'<a href="/foo.html">')
+        == b'<a href="/hivrisk.cdc.gov/foo.html">'
+    )
+    assert (
+        rewrite_html_urls("hivrisk.cdc.gov/", b'<link rel="shortcut icon" href="/TemplatePackage/4.0/assets/imgs/favicon.ico">')
+        == b'<link rel="shortcut icon" href="/hivrisk.cdc.gov/TemplatePackage/4.0/assets/imgs/favicon.ico">'
     )
 
 def test_full_urls():
@@ -36,15 +40,15 @@ def test_full_urls():
     """
     assert (
         rewrite_html_urls(
-            "https://hivrisk.cdc.gov/", b"<a href='https://hivrisk.cdc.gov/foo.html'>"
+            "hivrisk.cdc.gov/", b"<a href='https://hivrisk.cdc.gov/foo.html'>"
         )
-        == b"<a href='/https://hivrisk.cdc.gov/foo.html'>"
+        == b"<a href='/hivrisk.cdc.gov/foo.html'>"
     )
     assert (
         rewrite_html_urls(
-            "https://hivrisk.cdc.gov/", b'<a href="https://hivrisk.cdc.gov/foo.html">'
+            "hivrisk.cdc.gov/", b'<a href="https://hivrisk.cdc.gov/foo.html">'
         )
-        == b'<a href="/https://hivrisk.cdc.gov/foo.html">'
+        == b'<a href="/hivrisk.cdc.gov/foo.html">'
     )
 
 def test_other_subdomains():
@@ -53,9 +57,9 @@ def test_other_subdomains():
     """
     assert (
         rewrite_html_urls(
-            "https://nccd.cdc.gov/", b"<a href='https://nccd.cdc.gov/foo.html'>"
+            "nccd.cdc.gov/", b"<a href='https://nccd.cdc.gov/foo.html'>"
         )
-        == b"<a href='/https://nccd.cdc.gov/foo.html'>"
+        == b"<a href='/nccd.cdc.gov/foo.html'>"
     )
     
 def test_src_rewrites():
@@ -64,15 +68,15 @@ def test_src_rewrites():
     """
     assert (
         rewrite_html_urls(
-            "https://hivrisk.cdc.gov/", b"<img src='https://hivrisk.cdc.gov/img.jpg'>"
+            "hivrisk.cdc.gov/", b"<img src='https://hivrisk.cdc.gov/img.jpg'>"
         )
-        == b"<img src='/https://hivrisk.cdc.gov/img.jpg'>"
+        == b"<img src='/hivrisk.cdc.gov/img.jpg'>"
     )
     assert (
         rewrite_html_urls(
-            "https://hivrisk.cdc.gov/", b'<img src="https://hivrisk.cdc.gov/img.jpg">'
+            "hivrisk.cdc.gov/", b'<img src="https://hivrisk.cdc.gov/img.jpg">'
         )
-        == b'<img src="/https://hivrisk.cdc.gov/img.jpg">'
+        == b'<img src="/hivrisk.cdc.gov/img.jpg">'
     )
 
 class MyServeLevelDB(ServeLevelDB):
@@ -133,4 +137,30 @@ def test_find_content_not_found():
     assert (
         db.find_content("https://nccd.cdc.gov/page-definitely-not-there.html")
         == (None, None)
+    )
+
+def test_simplify_path():
+    """
+    Check that simplify_path does what is needed for various
+    http/https prefixes
+    """
+    assert (
+        simplify_path("https://hivrisk.cdc.gov/testing.html")
+        == "hivrisk.cdc.gov/testing.html"
+    )
+    assert (
+        simplify_path("http://hivrisk.cdc.gov/testing.html")
+        == "hivrisk.cdc.gov/testing.html"
+    )
+    assert (
+        simplify_path("https:/hivrisk.cdc.gov/testing.html")
+        == "hivrisk.cdc.gov/testing.html"
+    )
+    assert (
+        simplify_path("http:/hivrisk.cdc.gov/testing.html")
+        == "hivrisk.cdc.gov/testing.html"
+    )
+    assert (
+        simplify_path("hivrisk.cdc.gov/testing.html")
+        == "hivrisk.cdc.gov/testing.html"
     )
