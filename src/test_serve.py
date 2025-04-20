@@ -1,4 +1,4 @@
-from serve import rewrite_html_urls, simplify_path, ServeLevelDB
+from serve import rewrite_html_urls, simplify_path, ServeLevelDB, set_globals
 
 
 def test_relative_paths():
@@ -40,6 +40,12 @@ def test_full_urls():
     """
     Check that we handle full URLs correctly
     """
+    set_globals(
+        ['hivrisk.cdc.gov', 'nccd.cdc.gov'],
+        'www.restoredcdc.org',
+        ['www.cdc.gov']
+    )
+
     assert (
         rewrite_html_urls(
             "hivrisk.cdc.gov/", b"<a href='https://hivrisk.cdc.gov/foo.html'>"
@@ -58,6 +64,12 @@ def test_other_subdomains():
     """
     Check that we aren't just redirecting everything to hivrisk
     """
+    set_globals(
+        ['hivrisk.cdc.gov', 'nccd.cdc.gov'],
+        'www.restoredcdc.org',
+        ['www.cdc.gov']
+    )
+
     assert (
         rewrite_html_urls(
             "nccd.cdc.gov/", b"<a href='https://nccd.cdc.gov/foo.html'>"
@@ -70,6 +82,12 @@ def test_src_rewrites():
     """
     Check that we rewrite src as well as href
     """
+    set_globals(
+        ['hivrisk.cdc.gov', 'nccd.cdc.gov'],
+        'www.restoredcdc.org',
+        ['www.cdc.gov']
+    )
+
     assert (
         rewrite_html_urls(
             "hivrisk.cdc.gov/", b"<img src='https://hivrisk.cdc.gov/img.jpg'>"
@@ -81,6 +99,24 @@ def test_src_rewrites():
             "hivrisk.cdc.gov/", b'<img src="https://hivrisk.cdc.gov/img.jpg">'
         )
         == b'<img src="/hivrisk.cdc.gov/img.jpg">'
+    )
+
+
+def test_primary_rewrite():
+    """
+    Check that we redirect to the primary restoredcdc site appropriately
+    """
+    set_globals(
+        ['hivrisk.cdc.gov', 'nccd.cdc.gov'],
+        'www.restoredcdc.org',
+        ['www.cdc.gov']
+    )
+
+    assert (
+        rewrite_html_urls(
+            "hivrisk.cdc.gov/", b"<a href='https://www.cdc.gov/'>"
+        )
+        == b"<a href='https://www.restoredcdc.org/www.cdc.gov/'>"
     )
 
 

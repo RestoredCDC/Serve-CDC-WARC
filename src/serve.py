@@ -10,6 +10,9 @@ from waitress import serve
 import plyvel
 
 app = Flask(__name__)
+supported_sites = []
+primary_host = ''
+primary_sites = []
 
 
 class ServeLevelDB:
@@ -40,6 +43,7 @@ class ServeLevelDB:
         :param full_path: The original URL, as bytes
         :return: Two values, the content (as bytes), ans the mimetype (as str)
         """
+        full_path = full_path.replace(' ', '%20')
         raw_key = bytes(full_path, "utf-8")
 
         logging.debug(f"Looking up key: {full_path}")
@@ -98,6 +102,9 @@ def rewrite_html_urls(full_path, content):
     srcset attributes and such, so there are no doubt other hidden
     treasures.
     """
+    logging.debug(f"supported sites: {supported_sites}")
+    logging.debug(f"primary sites {primary_sites} at {primary_host}")
+
     path_match = re.match(r"([^/]+)/", full_path)
     if not path_match:
         # Can't do anything useful here
@@ -108,22 +115,66 @@ def rewrite_html_urls(full_path, content):
     # their staging site, not that it makes much of a difference :)
     content = content.replace(b"hivriskstage.cdc.gov", b"hivrisk.cdc.gov")
 
-    content = content.replace(bytes(f" https://{website}/", "utf-8"),
-                              bytes(f" /{website}/", "utf-8"))
     content = content.replace(
         b"href=\"/", bytes(f"href=\"/{website}/", "utf-8")
     )
     content = content.replace(
         b"href=\'/", bytes(f"href=\'/{website}/", "utf-8")
     )
-    content = content.replace(bytes(f"href=\"https://{website}/", "utf-8"),
-                              bytes(f"href=\"/{website}/", "utf-8"))
-    content = content.replace(bytes(f"href=\'https://{website}/", "utf-8"),
-                              bytes(f"href=\'/{website}/", "utf-8"))
-    content = content.replace(bytes(f"src=\"https://{website}/", "utf-8"),
-                              bytes(f"src=\"/{website}/", "utf-8"))
-    content = content.replace(bytes(f"src=\'https://{website}/", "utf-8"),
-                              bytes(f"src=\'/{website}/", "utf-8"))
+    content = content.replace(
+        b"src=\"/", bytes(f"src=\"/{website}/", "utf-8")
+    )
+    content = content.replace(
+        b"src=\'/", bytes(f"src=\'/{website}/", "utf-8")
+    )
+    content = content.replace(
+        b"srcset=\"/", bytes(f"srcset=\"/{website}/", "utf-8")
+    )
+    content = content.replace(
+        b"srcset=\'/", bytes(f"srcset=\'/{website}/", "utf-8")
+    )
+    for site in supported_sites:
+        content = content.replace(
+            bytes(f"https://{site}/", "utf-8"),
+            bytes(f"/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"href=\"https://{site}/", "utf-8"),
+            bytes(f"href=\"/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"href=\'https://{site}/", "utf-8"),
+            bytes(f"href=\'/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"src=\"https://{site}/", "utf-8"),
+            bytes(f"src=\"/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"src=\'https://{site}/", "utf-8"),
+            bytes(f"src=\'/{site}/", "utf-8")
+        )
+    for site in primary_sites:
+        content = content.replace(
+            bytes(f"https://{site}/", "utf-8"),
+            bytes(f"https://{primary_host}/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"href=\"https://{site}/", "utf-8"),
+            bytes(f"href=\"https://{primary_host}/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"href=\'https://{site}/", "utf-8"),
+            bytes(f"href=\'https://{primary_host}/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"src=\"https://{site}/", "utf-8"),
+            bytes(f"src=\"https://{primary_host}/{site}/", "utf-8")
+        )
+        content = content.replace(
+            bytes(f"src=\'https://{site}/", "utf-8"),
+            bytes(f"src=\'https://{primary_host}/{site}/", "utf-8")
+        )
 
     return content
 
@@ -160,7 +211,7 @@ def home():
     """
     Default route
     """
-    return redirect("/www.cdc.gov/")
+    return redirect("/hivrisk.cdc.gov/")
 
 
 @app.route("/<path:subpath>")
@@ -190,13 +241,19 @@ def lookup(subpath):
 
         logging.debug(f"Mime type {mimetype} for {full_path}")
 
-        if full_path.startswith("https://") and (
-                mimetype == "text/html" or mimetype.startswith("text/html;")
+        # Rewriting URLs in javascript and stylesheets that we serve
+        # up should probably be done slightly differently
+        if (
+                mimetype == "text/html" or
+                mimetype.startswith("text/html;") or
+
+                mimetype == "application/javascript" or
+                mimetype == "application/x-javascript" or
+                mimetype == "text/javascript" or
+
+                mimetype == "text/css"
         ):
             content = rewrite_html_urls(full_path, content)
-
-        # XXX: We probably also need to rewrite URLs in javascript and
-        #      stylesheets that we serve up
 
         return Response(content, mimetype=mimetype)
 
@@ -237,7 +294,18 @@ def parse_arguments():
     parser.add_argument(
         '--dbfolder', default="../data/dev/db/cdc_database", type=str
     )
+    parser.add_argument('--sites', default="sitelist.txt", type=str)
+    parser.add_argument('--primary-list', default="primary.txt", type=str)
+    parser.add_argument('--primary-host', default="www.restoredcdc.org", type=str)
     return parser.parse_args()
+
+
+def set_globals(sites, host, primary):
+    global supported_sites, primary_host, primary_sites
+
+    supported_sites = sites
+    primary_host = host
+    primary_sites = primary
 
 
 def main():
@@ -248,6 +316,17 @@ def main():
 
     setup_logging()
     args = parse_arguments()
+
+    with open(args.sites, 'r', encoding="utf-8") as sites_fd:
+        supported_sites = [site.strip() for site in sites_fd.readlines()]
+
+    with open(args.primary_list, 'r', encoding="utf-8") as primary_fd:
+        primary_sites = [site.strip() for site in primary_fd.readlines()]
+
+    set_globals(supported_sites, args.primary_host, primary_sites)
+
+    logging.debug(f"supported sites: {supported_sites}")
+    logging.debug(f"primary sites {primary_sites} at {args.primary_host}")
 
     serve_db = ServeLevelDB(args.dbfolder)
 
